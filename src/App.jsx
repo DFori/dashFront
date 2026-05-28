@@ -38,6 +38,12 @@ const timeAgo = (iso) => {
   return `${Math.floor(diff / 86400)}d ago`;
 };
 
+const parseCoord = (value) => {
+  if (value === null || value === undefined || value === "") return null;
+  const num = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
 const readStoredValue = (key) => {
   const value = localStorage.getItem(key);
   if (!value || value === "undefined" || value === "null") return "";
@@ -515,18 +521,22 @@ export default function App() {
         const binId = String(bin.bin_id);
         const client = clientByBinId.get(binId);
         const request = requestByBinId.get(binId);
-        const lat = client?.latitude;
-        const lng = client?.longitude;
-        const parsedLat = typeof lat === "number" ? lat : lat ? Number(lat) : null;
-        const parsedLng = typeof lng === "number" ? lng : lng ? Number(lng) : null;
+        const requestLat = parseCoord(request?.latitude ?? request?.lat ?? request?.location?.lat ?? request?.pickup_latitude ?? request?.pickup_lat);
+        const requestLng = parseCoord(request?.longitude ?? request?.lng ?? request?.location?.lng ?? request?.pickup_longitude ?? request?.pickup_lng);
+        const clientLat = parseCoord(client?.latitude ?? client?.lat);
+        const clientLng = parseCoord(client?.longitude ?? client?.lng);
+        const binLat = parseCoord(bin?.latitude ?? bin?.lat);
+        const binLng = parseCoord(bin?.longitude ?? bin?.lng);
+        const resolvedLat = requestLat ?? clientLat ?? binLat;
+        const resolvedLng = requestLng ?? clientLng ?? binLng;
 
         return {
           id: binId,
           name: formatBinName(binId),
           type: bin.bin_type,
           level: bin.bin_level,
-          lat: Number.isFinite(parsedLat) ? parsedLat : null,
-          lng: Number.isFinite(parsedLng) ? parsedLng : null,
+          lat: resolvedLat,
+          lng: resolvedLng,
           address: client?.address || "No address",
           client: client
             ? { id: client.id, label: client.phone ? client.phone : `Client #${client.id}` }
@@ -796,7 +806,7 @@ export default function App() {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-xl font-extrabold text-slate-800">{activeNav}</h1>
-              <p className="text-sm text-slate-400 mt-0.5">CleanStreak Waste Management — Bingham University</p>
+              <p className="text-sm text-slate-400 mt-0.5">CleanStreak Waste Management </p>
             </div>
             <div className="flex gap-2">
               {canCreateBin && (
