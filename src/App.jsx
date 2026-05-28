@@ -1,34 +1,13 @@
-import { useState, useEffect, useRef } from "react";
-
-// ─── Mock Data ───────────────────────────────────────────────────────────────
-const AGENTS = [
-  { id: 1, name: "Emeka Okafor", phone: "0801-234-5678", role: "pickup" },
-  { id: 2, name: "Ngozi Adeyemi", phone: "0802-345-6789", role: "pickup" },
-  { id: 3, name: "Chukwudi Eze", phone: "0803-456-7890", role: "pickup" },
-  { id: 4, name: "Amina Bello", phone: "0804-567-8901", role: "pickup" },
-  { id: 5, name: "Tunde Fashola", phone: "0805-678-9012", role: "pickup" },
-];
-
-const MOCK_BINS = [
-  { id: 1, name: "BIN-001", type: "recyclable", level: 88, lat: 9.925, lng: 8.892, address: "Bingham University Main Gate, Karu", agent: AGENTS[0], lastEmptied: "2025-05-07", pickupRequest: true, status: "active" },
-  { id: 2, name: "BIN-002", type: "perishable", level: 62, lat: 9.921, lng: 8.889, address: "Faculty of Computing, Bingham University", agent: AGENTS[1], lastEmptied: "2025-05-08", pickupRequest: false, status: "active" },
-  { id: 3, name: "BIN-003", type: "recyclable", level: 95, lat: 9.928, lng: 8.895, address: "Student Hostel Block A, Bingham", agent: null, lastEmptied: "2025-05-06", pickupRequest: true, status: "active" },
-  { id: 4, name: "BIN-004", type: "perishable", level: 34, lat: 9.919, lng: 8.886, address: "University Cafeteria, Bingham", agent: AGENTS[2], lastEmptied: "2025-05-08", pickupRequest: false, status: "active" },
-  { id: 5, name: "BIN-005", type: "recyclable", level: 77, lat: 9.930, lng: 8.888, address: "Library Complex, Bingham University", agent: AGENTS[3], lastEmptied: "2025-05-07", pickupRequest: false, status: "active" },
-  { id: 6, name: "BIN-006", type: "perishable", level: 91, lat: 9.923, lng: 8.898, address: "Sports Complex, Bingham University", agent: null, lastEmptied: "2025-05-05", pickupRequest: true, status: "active" },
-  { id: 7, name: "BIN-007", type: "recyclable", level: 18, lat: 9.916, lng: 8.893, address: "Administration Block, Bingham", agent: AGENTS[4], lastEmptied: "2025-05-08", pickupRequest: false, status: "active" },
-  { id: 8, name: "BIN-008", type: "perishable", level: 55, lat: 9.926, lng: 8.883, address: "Medical Centre, Bingham University", agent: AGENTS[0], lastEmptied: "2025-05-07", pickupRequest: false, status: "inactive" },
-  { id: 9, name: "BIN-009", type: "recyclable", level: 82, lat: 9.912, lng: 8.901, address: "Engineering Lab, Bingham University", agent: null, lastEmptied: "2025-05-06", pickupRequest: true, status: "active" },
-  { id: 10, name: "BIN-010", type: "perishable", level: 43, lat: 9.933, lng: 8.878, address: "Chapel Area, Bingham University", agent: AGENTS[2], lastEmptied: "2025-05-08", pickupRequest: false, status: "active" },
-];
-
-const MOCK_PICKUP_REQUESTS = [
-  { id: 1, binId: 1, binName: "BIN-001", type: "recyclable", level: 88, address: "Bingham University Main Gate", agent: "Emeka Okafor", status: "pending", createdAt: "2025-05-09T06:30:00Z" },
-  { id: 2, binId: 3, binName: "BIN-003", type: "recyclable", level: 95, address: "Student Hostel Block A", agent: "Unassigned", status: "pending", createdAt: "2025-05-09T07:15:00Z" },
-  { id: 3, binId: 6, binName: "BIN-006", type: "perishable", level: 91, address: "Sports Complex", agent: "Unassigned", status: "pending", createdAt: "2025-05-09T05:50:00Z" },
-  { id: 4, binId: 9, binName: "BIN-009", type: "recyclable", level: 82, address: "Engineering Lab", agent: "Unassigned", status: "pending", createdAt: "2025-05-08T22:00:00Z" },
-  { id: 5, binId: 2, binName: "BIN-002", type: "perishable", level: 80, address: "Faculty of Computing", agent: "Ngozi Adeyemi", status: "approved", createdAt: "2025-05-08T14:00:00Z" },
-];
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  login,
+  getBins,
+  getClients,
+  getPickupRequests,
+  approvePickup,
+  createBin,
+  assignBin,
+} from "./services/api";
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 const getFillColor = (level) => {
@@ -43,14 +22,102 @@ const getFillBg = (level) => {
   return "bg-green-100 text-green-700";
 };
 
+const formatBinName = (binId) => {
+  const raw = String(binId ?? "").trim();
+  if (!raw) return "BIN-UNKNOWN";
+  return raw.startsWith("BIN-") ? raw : `BIN-${raw}`;
+};
+
 const timeAgo = (iso) => {
-  const diff = (Date.now() - new Date(iso)) / 1000;
+  if (!iso) return "-";
+  const timestamp = new Date(iso).getTime();
+  if (Number.isNaN(timestamp)) return "-";
+  const diff = (Date.now() - timestamp) / 1000;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 };
 
+const readStoredValue = (key) => {
+  const value = localStorage.getItem(key);
+  if (!value || value === "undefined" || value === "null") return "";
+  return value;
+};
+
+const loadGoogleMaps = (apiKey) => {
+  if (!apiKey) return Promise.reject(new Error("Missing Google Maps API key."));
+  if (window.google?.maps) return Promise.resolve(window.google.maps);
+  if (window.__googleMapsPromise) return window.__googleMapsPromise;
+
+  window.__googleMapsPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}`;
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve(window.google.maps);
+    script.onerror = () => reject(new Error("Failed to load Google Maps."));
+    document.head.appendChild(script);
+  });
+
+  return window.__googleMapsPromise;
+};
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
+
+function LoginScreen({ onLogin, loading, error }) {
+  const [form, setForm] = useState({ email: "", password: "" });
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleSubmit = () => {
+    onLogin(form);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-8">
+        <div className="flex items-center gap-3 mb-8">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-green-500 flex items-center justify-center text-white text-xl">♻</div>
+          <div>
+            <p className="font-extrabold text-slate-800 text-lg">CleanStreak</p>
+            <p className="text-xs text-slate-400">Admin Portal</p>
+          </div>
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Email</label>
+            <input
+              type="email"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="admin@cleanstreak.ng"
+              value={form.email}
+              onChange={(e) => set("email", e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Password</label>
+            <input
+              type="password"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="********"
+              value={form.password}
+              onChange={(e) => set("password", e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
+            />
+          </div>
+          {error && <p className="text-xs text-red-500 font-medium">{error}</p>}
+          <button
+            onClick={handleSubmit}
+            disabled={loading}
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-green-500 text-white font-semibold text-sm hover:opacity-90 transition disabled:opacity-50"
+          >
+            {loading ? "Signing in..." : "Sign In"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function StatCard({ icon, label, value, color = "blue", sub }) {
   const colors = {
@@ -68,49 +135,14 @@ function StatCard({ icon, label, value, color = "blue", sub }) {
       </div>
       <div>
         <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">{label}</p>
-        <p className="text-2xl font-bold text-slate-800 leading-tight">{value}</p>
+        <p className="text-2xl font-bold text-slate-800 leading-tight">{value ?? "-"}</p>
         {sub && <p className="text-xs text-slate-400 mt-0.5">{sub}</p>}
       </div>
     </div>
   );
 }
 
-function BinMarker({ bin, onClick, isSelected }) {
-  const isRecyclable = bin.type === "recyclable";
-  const isFull = bin.level >= 80;
-  const baseColor = isRecyclable ? "#3b82f6" : "#22c55e";
-  const borderColor = isSelected ? "#f59e0b" : isFull ? "#ef4444" : baseColor;
-  return (
-    <div
-      onClick={() => onClick(bin)}
-      className="absolute cursor-pointer transform -translate-x-1/2 -translate-y-1/2 transition-transform hover:scale-110"
-      style={{ left: `${bin._mapX}%`, top: `${bin._mapY}%` }}
-      title={bin.name}
-    >
-      <div className="relative">
-        <div
-          className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-lg transition-all"
-          style={{
-            backgroundColor: baseColor,
-            border: `3px solid ${borderColor}`,
-            boxShadow: isSelected ? `0 0 0 4px rgba(245,158,11,0.3)` : isFull ? `0 0 0 4px rgba(239,68,68,0.25)` : `0 0 6px rgba(0,0,0,0.15)`,
-          }}
-        >
-          {isRecyclable ? "♻" : "🌿"}
-        </div>
-        {bin.pickupRequest && (
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-orange-500 rounded-full border-2 border-white animate-pulse" />
-        )}
-        {isFull && !bin.pickupRequest && (
-          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white" />
-        )}
-      </div>
-      <div className="w-1 h-2 mx-auto" style={{ backgroundColor: borderColor, marginTop: "-1px" }} />
-    </div>
-  );
-}
-
-function BinDetailPopup({ bin, onClose, onAssign, onMarkPickedUp }) {
+function BinDetailPopup({ bin, onClose, onAssign, onMarkPickedUp, canAssign, canApprove }) {
   if (!bin) return null;
   const isRecyclable = bin.type === "recyclable";
   return (
@@ -136,13 +168,13 @@ function BinDetailPopup({ bin, onClose, onAssign, onMarkPickedUp }) {
           </div>
         </div>
         <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="bg-slate-50 rounded-lg p-2">
+          <div className="bg-slate-50 rounded-lg p-2 col-span-2">
             <p className="text-slate-400">Location</p>
             <p className="text-slate-700 font-medium mt-0.5 leading-tight">{bin.address}</p>
           </div>
           <div className="bg-slate-50 rounded-lg p-2">
-            <p className="text-slate-400">Agent</p>
-            <p className="text-slate-700 font-medium mt-0.5">{bin.agent?.name || "Unassigned"}</p>
+            <p className="text-slate-400">Client</p>
+            <p className="text-slate-700 font-medium mt-0.5">{bin.client?.label || "Unassigned"}</p>
           </div>
           <div className="bg-slate-50 rounded-lg p-2">
             <p className="text-slate-400">Pickup Request</p>
@@ -152,12 +184,16 @@ function BinDetailPopup({ bin, onClose, onAssign, onMarkPickedUp }) {
           </div>
           <div className="bg-slate-50 rounded-lg p-2">
             <p className="text-slate-400">Last Emptied</p>
-            <p className="text-slate-700 font-medium mt-0.5">{bin.lastEmptied}</p>
+            <p className="text-slate-700 font-medium mt-0.5">{bin.lastEmptied || "-"}</p>
           </div>
         </div>
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onAssign(bin)} className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">Assign</button>
-          <button onClick={() => onMarkPickedUp(bin)} className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors">Mark Picked Up</button>
+          {canAssign && (
+            <button onClick={() => onAssign(bin)} className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors">Assign</button>
+          )}
+          {canApprove && bin.pickupRequest && (
+            <button onClick={() => onMarkPickedUp(bin)} className="flex-1 py-1.5 text-xs font-semibold rounded-lg bg-green-500 text-white hover:bg-green-600 transition-colors">Approve Pickup</button>
+          )}
         </div>
       </div>
     </div>
@@ -165,82 +201,95 @@ function BinDetailPopup({ bin, onClose, onAssign, onMarkPickedUp }) {
 }
 
 function CreateBinModal({ onClose, onCreate }) {
-  const [form, setForm] = useState({ name: "", type: "recyclable", address: "", lat: "", lng: "", capacity: "100", agent: "", status: "active" });
+  const [form, setForm] = useState({ binId: "", binType: "recyclable" });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  const handleCreate = async () => {
+    if (!form.binId.trim()) {
+      setError("Bin ID is required.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onCreate({ binId: form.binId.trim(), binType: form.binType });
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-800">Create New Bin</h2>
+          <h2 className="text-lg font-bold text-slate-800">Register New Bin</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
         </div>
-        <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Bin Name / ID</label>
-              <input className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g. BIN-011" value={form.name} onChange={e => set("name", e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Type</label>
-              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.type} onChange={e => set("type", e.target.value)}>
-                <option value="recyclable">Recyclable (Blue)</option>
-                <option value="perishable">Perishable (Green)</option>
-              </select>
-            </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Bin ID</label>
+            <input
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="BIN-001"
+              value={form.binId}
+              onChange={(e) => set("binId", e.target.value)}
+            />
           </div>
           <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Address / Location</label>
-            <input className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Building name or street address" value={form.address} onChange={e => set("address", e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Latitude</label>
-              <input type="number" step="0.001" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="9.925" value={form.lat} onChange={e => set("lat", e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Longitude</label>
-              <input type="number" step="0.001" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="8.892" value={form.lng} onChange={e => set("lng", e.target.value)} />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Capacity (L)</label>
-              <input type="number" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.capacity} onChange={e => set("capacity", e.target.value)} />
-            </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Status</label>
-              <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.status} onChange={e => set("status", e.target.value)}>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
-                <option value="maintenance">Maintenance</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Assigned Agent</label>
-            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.agent} onChange={e => set("agent", e.target.value)}>
-              <option value="">Unassigned</option>
-              {AGENTS.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Bin Type</label>
+            <select
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              value={form.binType}
+              onChange={(e) => set("binType", e.target.value)}
+            >
+              <option value="recyclable">Recyclable (Blue)</option>
+              <option value="perishable">Perishable (Green)</option>
             </select>
           </div>
+          {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex gap-3">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50 transition-colors">Cancel</button>
-          <button onClick={() => { onCreate(form); onClose(); }} className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-green-500 text-white font-semibold text-sm hover:opacity-90 transition-opacity">Create Bin</button>
+          <button onClick={handleCreate} disabled={loading} className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-green-500 text-white font-semibold text-sm hover:opacity-90 transition-opacity disabled:opacity-50">
+            {loading ? "Creating..." : "Create Bin"}
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
-function AssignBinModal({ bins, preselectedBin, onClose, onSave }) {
-  const [form, setForm] = useState({ binId: preselectedBin?.id || "", agentId: "", date: new Date().toISOString().split("T")[0], notes: "" });
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+function AssignBinModal({ bins, preselectedBinId, onClose, onSave }) {
+  const [form, setForm] = useState({ binId: preselectedBinId || "" });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleSave = async () => {
+    if (!form.binId) {
+      setError("Please select a bin.");
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    try {
+      await onSave(form);
+      onClose();
+    } catch (e) {
+      setError(e.message);
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-800">Assign Bin to Agent</h2>
+          <h2 className="text-lg font-bold text-slate-800">Assign Bin</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-2xl leading-none">×</button>
         </div>
         <div className="p-6 space-y-4">
@@ -248,28 +297,19 @@ function AssignBinModal({ bins, preselectedBin, onClose, onSave }) {
             <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Select Bin</label>
             <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.binId} onChange={e => set("binId", e.target.value)}>
               <option value="">Choose bin...</option>
-              {bins.map(b => <option key={b.id} value={b.id}>{b.name} — {b.address}</option>)}
+              {bins.map((b) => (
+                <option key={b.id} value={b.id}>{b.name} — {b.address}</option>
+              ))}
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Collection Agent</label>
-            <select className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.agentId} onChange={e => set("agentId", e.target.value)}>
-              <option value="">Choose agent...</option>
-              {AGENTS.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Assignment Date</label>
-            <input type="date" className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" value={form.date} onChange={e => set("date", e.target.value)} />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-500 mb-1.5 uppercase tracking-wider">Notes</label>
-            <textarea className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" rows={3} placeholder="Optional instructions..." value={form.notes} onChange={e => set("notes", e.target.value)} />
-          </div>
+          <p className="text-xs text-slate-400">This calls PATCH /api/clients/me/assign-bin for the logged-in client.</p>
+          {error && <p className="text-xs text-red-500">{error}</p>}
         </div>
         <div className="px-6 py-4 border-t border-slate-100 flex gap-3">
           <button onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-slate-200 text-slate-600 font-semibold text-sm hover:bg-slate-50">Cancel</button>
-          <button onClick={() => { onSave(form); onClose(); }} className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-teal-500 text-white font-semibold text-sm hover:opacity-90">Save Assignment</button>
+          <button onClick={handleSave} disabled={loading} className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-blue-500 to-teal-500 text-white font-semibold text-sm hover:opacity-90 disabled:opacity-50">
+            {loading ? "Saving..." : "Save Assignment"}
+          </button>
         </div>
       </div>
     </div>
@@ -277,7 +317,7 @@ function AssignBinModal({ bins, preselectedBin, onClose, onSave }) {
 }
 
 function Toast({ message, type = "success", onClose }) {
-  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []);
+  useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, [onClose]);
   return (
     <div className={`fixed bottom-6 right-6 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-xl text-white text-sm font-semibold z-[100] ${type === "success" ? "bg-green-500" : "bg-red-500"}`}>
       <span>{type === "success" ? "✓" : "✕"}</span>
@@ -287,63 +327,126 @@ function Toast({ message, type = "success", onClose }) {
 }
 
 // ─── Map Component ─────────────────────────────────────────────────────────
-function MapView({ bins, onBinClick, selectedBin, onAssign, onMarkPickedUp }) {
-  const lats = bins.map(b => b.lat);
-  const lngs = bins.map(b => b.lng);
-  const minLat = Math.min(...lats), maxLat = Math.max(...lats);
-  const minLng = Math.min(...lngs), maxLng = Math.max(...lngs);
-  const padLat = (maxLat - minLat) * 0.18 || 0.01;
-  const padLng = (maxLng - minLng) * 0.18 || 0.01;
+function MapView({ bins, onBinClick, selectedBin, onAssign, onMarkPickedUp, canAssign, canApprove }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markersRef = useRef(new Map());
+  const apiKey = import.meta.env.VITE_GOOGLE_MAP_API_KEY;
+  const [status, setStatus] = useState(() => (apiKey ? "loading" : "error"));
+  const [error, setError] = useState(() => (apiKey ? null : "Missing Google Maps API key."));
 
-  const withPos = bins.map(b => ({
-    ...b,
-    _mapX: ((b.lng - (minLng - padLng)) / ((maxLng + padLng) - (minLng - padLng))) * 100,
-    _mapY: (1 - (b.lat - (minLat - padLat)) / ((maxLat + padLat) - (minLat - padLat))) * 100,
-  }));
+  const binsWithCoords = bins.filter((bin) => Number.isFinite(bin.lat) && Number.isFinite(bin.lng));
+  const missingCoords = bins.length - binsWithCoords.length;
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!apiKey) return;
+
+    loadGoogleMaps(apiKey)
+      .then((maps) => {
+        if (cancelled || mapInstanceRef.current || !mapRef.current) return;
+        mapInstanceRef.current = new maps.Map(mapRef.current, {
+          center: { lat: 9.0765, lng: 7.3986 },
+          zoom: 7,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+        });
+        setStatus("ready");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setStatus("error");
+        setError(err.message || "Failed to load map.");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey]);
+
+  useEffect(() => {
+    if (status !== "ready" || !mapInstanceRef.current || !window.google?.maps) return;
+    const maps = window.google.maps;
+    const markers = markersRef.current;
+
+    markers.forEach((marker) => marker.setMap(null));
+    markers.clear();
+
+    const bounds = new maps.LatLngBounds();
+
+    binsWithCoords.forEach((bin) => {
+      const isSelected = selectedBin?.id === bin.id;
+      const position = { lat: bin.lat, lng: bin.lng };
+      const levelColor = getFillColor(bin.level);
+      const marker = new maps.Marker({
+        map: mapInstanceRef.current,
+        position,
+        title: `${bin.name} (${bin.level}%)`,
+        icon: {
+          path: maps.SymbolPath.CIRCLE,
+          scale: isSelected ? 9 : 7,
+          fillColor: bin.type === "recyclable" ? "#2563eb" : "#16a34a",
+          fillOpacity: 0.9,
+          strokeColor: isSelected ? "#f59e0b" : levelColor,
+          strokeWeight: isSelected ? 3 : 2,
+        },
+      });
+      marker.addListener("click", () => onBinClick(bin));
+      markers.set(bin.id, marker);
+      bounds.extend(position);
+    });
+
+    if (!bounds.isEmpty()) {
+      mapInstanceRef.current.fitBounds(bounds, { top: 48, bottom: 48, left: 48, right: 48 });
+    }
+  }, [binsWithCoords, selectedBin, status, onBinClick]);
 
   return (
-    <div className="relative w-full h-full rounded-2xl overflow-hidden bg-slate-100" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23cbd5e1' fill-opacity='0.4'%3E%3Cpath d='M0 40L40 0H20L0 20M40 40V20L20 40'/%3E%3C/g%3E%3C/svg%3E")` }}>
-      {/* Map background strips */}
-      <div className="absolute inset-0" style={{
-        background: "linear-gradient(135deg, #dbeafe 0%, #dcfce7 50%, #f0fdf4 100%)",
-        opacity: 0.7
-      }} />
-      {/* Grid lines */}
-      <svg className="absolute inset-0 w-full h-full opacity-20" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#64748b" strokeWidth="0.5"/>
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#grid)" />
-      </svg>
-      {/* "Roads" */}
-      <svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
-        <path d="M 20% 0% L 20% 100%" stroke="#e2e8f0" strokeWidth="6" fill="none"/>
-        <path d="M 60% 0% L 60% 100%" stroke="#e2e8f0" strokeWidth="6" fill="none"/>
-        <path d="M 0% 35% L 100% 35%" stroke="#e2e8f0" strokeWidth="6" fill="none"/>
-        <path d="M 0% 70% L 100% 70%" stroke="#e2e8f0" strokeWidth="6" fill="none"/>
-        <path d="M 0% 35% L 100% 35%" stroke="#f1f5f9" strokeWidth="2" fill="none"/>
-        <path d="M 20% 0% L 20% 100%" stroke="#f1f5f9" strokeWidth="2" fill="none"/>
-      </svg>
-      {/* Bins */}
-      {withPos.map(bin => (
-        <BinMarker key={bin.id} bin={bin} onClick={onBinClick} isSelected={selectedBin?.id === bin.id} />
-      ))}
-      {/* Bingham label */}
+    <div className="relative w-full h-full rounded-2xl overflow-hidden border border-slate-200 bg-slate-100">
+      <div ref={mapRef} className="absolute inset-0" />
+
+      {status === "loading" && (
+        <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-slate-500">
+          Loading Google Maps...
+        </div>
+      )}
+
+      {status === "error" && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-white/80 text-sm text-slate-500 px-6 text-center">
+          <p className="font-semibold text-slate-700">Map unavailable</p>
+          <p className="mt-1">{error}</p>
+        </div>
+      )}
+
+      {status === "ready" && binsWithCoords.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center text-sm text-slate-500 bg-white/70">
+          No bin locations yet. Add client coordinates to see bins on the map.
+        </div>
+      )}
+
       <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-xl px-3 py-2 shadow text-xs">
-        <p className="font-bold text-slate-700">Bingham University</p>
-        <p className="text-slate-400">Karu, Nasarawa State</p>
+        <p className="font-bold text-slate-700">CleanStreak Coverage</p>
+        <p className="text-slate-400">{binsWithCoords.length} mapped, {missingCoords} missing</p>
       </div>
-      {/* Legend */}
+
       <div className="absolute bottom-4 right-4 bg-white/95 backdrop-blur-sm rounded-xl px-3 py-2.5 shadow space-y-1.5 text-xs">
         <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-blue-500" /><span className="text-slate-600">Recyclable</span></div>
         <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-green-500" /><span className="text-slate-600">Perishable</span></div>
-        <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-red-400" /><span className="text-slate-600">Full (≥80%)</span></div>
-        <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-orange-400 animate-pulse" /><span className="text-slate-600">Pickup req.</span></div>
+        <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-red-400" /><span className="text-slate-600">Full (80%+)</span></div>
+        <div className="flex items-center gap-2"><div className="w-3.5 h-3.5 rounded-full bg-orange-400" /><span className="text-slate-600">Pickup req.</span></div>
       </div>
-      {/* Popup */}
-      {selectedBin && <BinDetailPopup bin={selectedBin} onClose={() => onBinClick(null)} onAssign={onAssign} onMarkPickedUp={onMarkPickedUp} />}
+
+      {selectedBin && (
+        <BinDetailPopup
+          bin={selectedBin}
+          onClose={() => onBinClick(null)}
+          onAssign={onAssign}
+          onMarkPickedUp={onMarkPickedUp}
+          canAssign={canAssign}
+          canApprove={canApprove}
+        />
+      )}
     </div>
   );
 }
@@ -351,16 +454,163 @@ function MapView({ bins, onBinClick, selectedBin, onAssign, onMarkPickedUp }) {
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 export default function App() {
   const [activeNav, setActiveNav] = useState("Dashboard");
-  const [bins, setBins] = useState(MOCK_BINS);
-  const [selectedBin, setSelectedBin] = useState(null);
+  const [bins, setBins] = useState([]);
+  const [selectedBinId, setSelectedBinId] = useState(null);
   const [filter, setFilter] = useState("all");
   const [showCreate, setShowCreate] = useState(false);
   const [showAssign, setShowAssign] = useState(false);
-  const [assignBin, setAssignBin] = useState(null);
+  const [assignBinId, setAssignBinId] = useState(null);
   const [toast, setToast] = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [pickupRequests, setPickupRequests] = useState(MOCK_PICKUP_REQUESTS);
+  const [pickupRequests, setPickupRequests] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [token, setToken] = useState(() => readStoredValue("cs_token"));
+  const [role, setRole] = useState(() => readStoredValue("cs_role"));
+  const [userId, setUserId] = useState(() => readStoredValue("cs_user_id"));
+  const [authError, setAuthError] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [lastUpdated, setLastUpdated] = useState(null);
+
+  const selectedBin = bins.find((bin) => bin.id === selectedBinId) || null;
+
+  const handleUnauthorized = useCallback(() => {
+    localStorage.removeItem("cs_token");
+    localStorage.removeItem("cs_role");
+    localStorage.removeItem("cs_user_id");
+    setToken("");
+    setRole("");
+    setUserId("");
+    setBins([]);
+    setPickupRequests([]);
+    setSelectedBinId(null);
+    setLoadError("");
+    setLastUpdated(null);
+    setAuthError("Session expired. Please sign in again.");
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    if (!token) return;
+    setLoading(true);
+    setLoadError("");
+
+    try {
+      const [binsResponse, pickupResponse, clientsResponse] = await Promise.all([
+        getBins(token, { skip: 0, limit: 200 }),
+        getPickupRequests(token, { skip: 0, limit: 200 }),
+        role === "admin" ? getClients(token, { skip: 0, limit: 200 }) : Promise.resolve([]),
+      ]);
+
+      const binsById = new Map(binsResponse.map((bin) => [String(bin.bin_id), bin]));
+      const pendingRequests = pickupResponse.filter((req) => req.status === "pending");
+      const requestByBinId = new Map(pendingRequests.map((req) => [String(req.bin_id), req]));
+      const clientByBinId = new Map(
+        clientsResponse
+          .filter((client) => client.bin_id)
+          .map((client) => [String(client.bin_id), client])
+      );
+
+      const mappedBins = binsResponse.map((bin) => {
+        const binId = String(bin.bin_id);
+        const client = clientByBinId.get(binId);
+        const request = requestByBinId.get(binId);
+        const lat = client?.latitude;
+        const lng = client?.longitude;
+        const parsedLat = typeof lat === "number" ? lat : lat ? Number(lat) : null;
+        const parsedLng = typeof lng === "number" ? lng : lng ? Number(lng) : null;
+
+        return {
+          id: binId,
+          name: formatBinName(binId),
+          type: bin.bin_type,
+          level: bin.bin_level,
+          lat: Number.isFinite(parsedLat) ? parsedLat : null,
+          lng: Number.isFinite(parsedLng) ? parsedLng : null,
+          address: client?.address || "No address",
+          client: client
+            ? { id: client.id, label: client.phone ? client.phone : `Client #${client.id}` }
+            : null,
+          lastEmptied: null,
+          pickupRequest: Boolean(request),
+          pickupRequestId: request?.id || null,
+          status: "active",
+        };
+      });
+
+      const mappedPickup = pickupResponse.map((req) => {
+        const bin = binsById.get(String(req.bin_id));
+        return {
+          id: req.id,
+          binId: req.bin_id,
+          binName: formatBinName(req.bin_id),
+          type: bin?.bin_type || "recyclable",
+          level: req.level,
+          address: req.address,
+          agent: req.client_name || req.client_phone || "Client",
+          status: req.status,
+          createdAt: req.created_at,
+        };
+      });
+
+      setBins(mappedBins);
+      setPickupRequests(mappedPickup);
+      setLastUpdated(new Date());
+    } catch (e) {
+      if (e?.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      setLoadError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [token, role, handleUnauthorized]);
+
+  useEffect(() => {
+    if (!token) return;
+    const t = setTimeout(() => refreshData(), 0);
+    return () => clearTimeout(t);
+  }, [token, refreshData]);
+
+  const handleLogin = async ({ email, password }) => {
+    setAuthLoading(true);
+    setAuthError("");
+    try {
+      const data = await login(email, password);
+      const accessToken = data?.access_token || data?.token || data?.accessToken;
+      if (!accessToken) {
+        throw new Error("Login response missing access token.");
+      }
+      const tokenType = String(data?.token_type || data?.tokenType || "").trim();
+      const combinedToken = tokenType ? `${tokenType} ${accessToken}` : accessToken;
+
+      setToken(combinedToken);
+      setRole(data.role || "");
+      setUserId(String(data.user_id || ""));
+      localStorage.setItem("cs_token", combinedToken);
+      localStorage.setItem("cs_role", data.role || "");
+      localStorage.setItem("cs_user_id", String(data.user_id || ""));
+    } catch (e) {
+      setAuthError(e.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("cs_token");
+    localStorage.removeItem("cs_role");
+    localStorage.removeItem("cs_user_id");
+    setToken("");
+    setRole("");
+    setUserId("");
+    setBins([]);
+    setPickupRequests([]);
+    setSelectedBinId(null);
+    setLoadError("");
+    setLastUpdated(null);
+  };
 
   const filteredBins = bins.filter(b => {
     const q = searchQuery.toLowerCase();
@@ -371,7 +621,7 @@ export default function App() {
     if (filter === "full-recyclable") return b.type === "recyclable" && b.level >= 80;
     if (filter === "full-perishable") return b.type === "perishable" && b.level >= 80;
     if (filter === "pickup") return b.pickupRequest;
-    if (filter === "unassigned") return !b.agent;
+    if (filter === "unassigned") return !b.client;
     return true;
   });
 
@@ -381,7 +631,7 @@ export default function App() {
     perishable: bins.filter(b => b.type === "perishable").length,
     full: bins.filter(b => b.level >= 80).length,
     pickup: bins.filter(b => b.pickupRequest).length,
-    unassigned: bins.filter(b => !b.agent).length,
+    unassigned: bins.filter(b => !b.client).length,
   };
 
   const attentionBins = bins.filter(b => b.level >= 70 || b.pickupRequest).sort((a, b) => b.level - a.level);
@@ -399,40 +649,68 @@ export default function App() {
     { name: "Settings", icon: "⚙️" },
   ];
 
-  const handleBinClick = (bin) => setSelectedBin(bin?.id === selectedBin?.id ? null : bin);
+  const handleBinClick = (bin) => setSelectedBinId(bin?.id === selectedBinId ? null : bin?.id || null);
 
-  const handleCreate = (form) => {
-    const newBin = {
-      id: bins.length + 1,
-      name: form.name || `BIN-0${bins.length + 1}`,
-      type: form.type,
-      level: 0,
-      lat: parseFloat(form.lat) || 9.925,
-      lng: parseFloat(form.lng) || 8.892,
-      address: form.address || "Bingham University",
-      agent: AGENTS.find(a => a.id === parseInt(form.agent)) || null,
-      lastEmptied: new Date().toISOString().split("T")[0],
-      pickupRequest: false,
-      status: form.status,
-    };
-    setBins(prev => [...prev, newBin]);
-    showToast(`${newBin.name} created successfully`);
+  const handleCreate = async (form) => {
+    if (!token) return;
+    try {
+      await createBin(token, { bin_id: form.binId, bin_type: form.binType });
+      await refreshData();
+      showToast(`${formatBinName(form.binId)} created successfully`);
+    } catch (e) {
+      if (e?.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      showToast(e.message, "error");
+      throw e;
+    }
   };
 
-  const handleAssign = (form) => {
-    const agent = AGENTS.find(a => a.id === parseInt(form.agentId));
-    setBins(prev => prev.map(b => b.id === parseInt(form.binId) ? { ...b, agent } : b));
-    showToast(`Bin assigned to ${agent?.name || "agent"}`);
+  const handleAssign = async (form) => {
+    if (!token) return;
+    try {
+      await assignBin(token, form.binId);
+      await refreshData();
+      showToast(`Bin ${formatBinName(form.binId)} assigned`);
+    } catch (e) {
+      if (e?.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      showToast(e.message, "error");
+      throw e;
+    }
   };
 
-  const handleMarkPickedUp = (bin) => {
-    setBins(prev => prev.map(b => b.id === bin.id ? { ...b, level: 0, pickupRequest: false, lastEmptied: new Date().toISOString().split("T")[0] } : b));
-    setPickupRequests(prev => prev.map(r => r.binId === bin.id ? { ...r, status: "approved" } : r));
-    setSelectedBin(null);
-    showToast(`${bin.name} marked as picked up`);
+  const handleMarkPickedUp = async (bin) => {
+    if (!token || !bin.pickupRequestId) {
+      showToast("No pending pickup request for this bin.", "error");
+      return;
+    }
+    try {
+      await approvePickup(token, bin.pickupRequestId);
+      await refreshData();
+      setSelectedBinId(null);
+      showToast(`${bin.name} pickup approved`);
+    } catch (e) {
+      if (e?.status === 401) {
+        handleUnauthorized();
+        return;
+      }
+      showToast(e.message, "error");
+    }
   };
 
-  const openAssign = (bin) => { setAssignBin(bin); setShowAssign(true); };
+  const openAssign = (bin) => { setAssignBinId(bin?.id || null); setShowAssign(true); };
+
+  const canCreateBin = role === "client";
+  const canAssignBin = role === "client";
+  const canApprovePickup = role === "admin" || role === "pickup";
+
+  if (!token) {
+    return <LoginScreen onLogin={handleLogin} loading={authLoading} error={authError} />;
+  }
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
@@ -460,7 +738,12 @@ export default function App() {
         <div className="p-3 border-t border-slate-100">
           <div className={`flex items-center gap-3 px-3 py-2 rounded-xl bg-slate-50 ${!sidebarOpen && "justify-center"}`}>
             <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">A</div>
-            {sidebarOpen && <div><p className="text-xs font-semibold text-slate-700">Admin User</p><p className="text-xs text-slate-400">admin@cleanstreak.ng</p></div>}
+            {sidebarOpen && (
+              <div>
+                <p className="text-xs font-semibold text-slate-700">{role || "User"}</p>
+                <p className="text-xs text-slate-400">User {userId || "-"}</p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
@@ -480,6 +763,13 @@ export default function App() {
             />
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <button
+              onClick={refreshData}
+              disabled={loading}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50"
+            >
+              {loading ? "Refreshing..." : "Refresh"}
+            </button>
             <button className="relative p-2 rounded-xl hover:bg-slate-50 text-slate-500 text-lg">
               🔔
               {stats.pickup > 0 && <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white" />}
@@ -487,10 +777,16 @@ export default function App() {
             <div className="flex items-center gap-2 pl-3 border-l border-slate-100">
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white text-xs font-bold">A</div>
               <div className="hidden sm:block">
-                <p className="text-xs font-semibold text-slate-700 leading-none">Admin</p>
-                <p className="text-xs text-slate-400">Super Admin</p>
+                <p className="text-xs font-semibold text-slate-700 leading-none">{role || "User"}</p>
+                <p className="text-xs text-slate-400">User {userId || "-"}</p>
               </div>
             </div>
+            <button
+              onClick={handleLogout}
+              className="px-3 py-2 rounded-xl border border-slate-200 text-slate-500 text-xs font-semibold hover:bg-slate-50"
+            >
+              Sign Out
+            </button>
           </div>
         </header>
 
@@ -503,21 +799,31 @@ export default function App() {
               <p className="text-sm text-slate-400 mt-0.5">CleanStreak Waste Management — Bingham University</p>
             </div>
             <div className="flex gap-2">
-              <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold hover:opacity-90 transition shadow-sm">
-                <span>+</span> Create Bin
-              </button>
-              <button onClick={() => { setAssignBin(null); setShowAssign(true); }} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-green-500 text-white text-sm font-semibold hover:opacity-90 transition shadow-sm">
-                <span>👤</span> Assign Bin
-              </button>
+              {canCreateBin && (
+                <button onClick={() => setShowCreate(true)} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-500 to-blue-600 text-white text-sm font-semibold hover:opacity-90 transition shadow-sm">
+                  <span>+</span> Create Bin
+                </button>
+              )}
+              {canAssignBin && (
+                <button onClick={() => { setAssignBinId(null); setShowAssign(true); }} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-green-500 text-white text-sm font-semibold hover:opacity-90 transition shadow-sm">
+                  <span>👤</span> Assign Bin
+                </button>
+              )}
             </div>
           </div>
+
+          {loadError && (
+            <div className="bg-red-50 border border-red-100 text-red-600 px-4 py-3 rounded-xl text-sm">
+              Failed to load data: {loadError}
+            </div>
+          )}
 
           {/* Stats Row */}
           <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
             <StatCard icon="🗑" label="Total Bins" value={stats.total} color="blue" />
             <StatCard icon="♻" label="Recyclable" value={stats.recyclable} color="blue" />
             <StatCard icon="🌿" label="Perishable" value={stats.perishable} color="green" />
-            <StatCard icon="🔴" label="Full Bins" value={stats.full} color="red" sub="≥80% capacity" />
+            <StatCard icon="🔴" label="Full Bins" value={stats.full} color="red" sub="80%+ capacity" />
             <StatCard icon="🚛" label="Pickup Req." value={stats.pickup} color="orange" sub="pending" />
             <StatCard icon="⚠" label="Unassigned" value={stats.unassigned} color="gray" />
           </div>
@@ -553,7 +859,15 @@ export default function App() {
                 ))}
               </div>
               <div className="flex-1 relative">
-                <MapView bins={filteredBins} onBinClick={handleBinClick} selectedBin={selectedBin} onAssign={openAssign} onMarkPickedUp={handleMarkPickedUp} />
+                <MapView
+                  bins={filteredBins}
+                  onBinClick={handleBinClick}
+                  selectedBin={selectedBin}
+                  onAssign={openAssign}
+                  onMarkPickedUp={handleMarkPickedUp}
+                  canAssign={canAssignBin}
+                  canApprove={canApprovePickup}
+                />
               </div>
             </div>
 
@@ -582,6 +896,9 @@ export default function App() {
                       </div>
                     </div>
                   ))}
+                  {pickupRequests.length === 0 && (
+                    <div className="text-xs text-slate-400 text-center py-6">No pickup requests found.</div>
+                  )}
                 </div>
               </div>
 
@@ -590,17 +907,20 @@ export default function App() {
                 <p className="font-bold text-slate-700 text-sm mb-3">Quick Actions</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { label: "Create Bin", icon: "➕", action: () => setShowCreate(true), color: "blue" },
-                    { label: "Assign Bin", icon: "👤", action: () => { setAssignBin(null); setShowAssign(true); }, color: "teal" },
-                    { label: "Pickup Queue", icon: "🚛", action: () => setActiveNav("Pickup Requests"), color: "orange" },
-                    { label: "Export Report", icon: "📊", action: () => showToast("Report export started"), color: "gray" },
-                  ].map(a => (
+                    canCreateBin ? { label: "Create Bin", icon: "➕", action: () => setShowCreate(true) } : null,
+                    canAssignBin ? { label: "Assign Bin", icon: "👤", action: () => { setAssignBinId(null); setShowAssign(true); } } : null,
+                    { label: "Pickup Queue", icon: "🚛", action: () => setActiveNav("Pickup Requests") },
+                    { label: "Refresh Data", icon: "⟳", action: refreshData },
+                  ].filter(Boolean).map((a) => (
                     <button key={a.label} onClick={a.action} className="flex flex-col items-center gap-1.5 p-3 rounded-xl border border-slate-100 hover:bg-slate-50 transition">
                       <span className="text-lg">{a.icon}</span>
                       <span className="text-xs font-semibold text-slate-600">{a.label}</span>
                     </button>
                   ))}
                 </div>
+                {lastUpdated && (
+                  <p className="text-[11px] text-slate-400 mt-3">Last updated {timeAgo(lastUpdated.toISOString())}</p>
+                )}
               </div>
             </div>
           </div>
@@ -644,8 +964,8 @@ export default function App() {
                       </td>
                       <td className="px-5 py-3 text-slate-600 max-w-[180px] truncate">{bin.address}</td>
                       <td className="px-5 py-3">
-                        {bin.agent ? (
-                          <span className="text-slate-700 font-medium">{bin.agent.name}</span>
+                        {bin.client ? (
+                          <span className="text-slate-700 font-medium">{bin.client.label}</span>
                         ) : (
                           <span className="text-orange-500 font-semibold text-xs">Unassigned</span>
                         )}
@@ -664,9 +984,11 @@ export default function App() {
                       <td className="px-5 py-3">
                         <div className="flex gap-1.5">
                           <button onClick={() => handleBinClick(bin)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-100 text-slate-600 hover:bg-slate-200 transition">View</button>
-                          <button onClick={() => openAssign(bin)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 transition">Assign</button>
-                          {bin.pickupRequest && (
-                            <button onClick={() => handleMarkPickedUp(bin)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-100 text-green-700 hover:bg-green-200 transition">✓ Pickup</button>
+                          {canAssignBin && (
+                            <button onClick={() => openAssign(bin)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-100 text-blue-700 hover:bg-blue-200 transition">Assign</button>
+                          )}
+                          {canApprovePickup && bin.pickupRequest && (
+                            <button onClick={() => handleMarkPickedUp(bin)} className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-100 text-green-700 hover:bg-green-200 transition">Approve</button>
                           )}
                         </div>
                       </td>
@@ -684,7 +1006,15 @@ export default function App() {
 
       {/* Modals */}
       {showCreate && <CreateBinModal onClose={() => setShowCreate(false)} onCreate={handleCreate} />}
-      {showAssign && <AssignBinModal bins={bins} preselectedBin={assignBin} onClose={() => { setShowAssign(false); setAssignBin(null); }} onSave={handleAssign} />}
+      {showAssign && (
+        <AssignBinModal
+          key={assignBinId || "assign"}
+          bins={bins}
+          preselectedBinId={assignBinId}
+          onClose={() => { setShowAssign(false); setAssignBinId(null); }}
+          onSave={handleAssign}
+        />
+      )}
       {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
     </div>
   );
